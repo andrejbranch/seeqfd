@@ -3,7 +3,6 @@
 namespace SEEQFD;
 
 use React\ZMQ\Context;
-
 use Ratchet\ConnectionInterface;
 
 class Messenger
