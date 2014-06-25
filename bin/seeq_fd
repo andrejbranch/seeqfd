@@ -73,8 +73,6 @@ $console
             }
         }
 
-        $process = new BackgroundProcess(sprintf('php %s/init', __DIR__));
-        $process->run();
 
         $maxRetries = 4; // before we abandon
         for ($i = 0; $i <= $maxRetries; $i++) {
@@ -88,8 +86,9 @@ $console
         }
 
         if ($reply) {
-            file_put_contents($pidFile, getmypid());
             echo ("Connected \n");
+            $process = new BackgroundProcess(sprintf('php %s/init', __DIR__));
+            $process->run();
         } else {
             echo ("Could not connect \n");
             $killResult = posix_kill(getmypid(), 9);
