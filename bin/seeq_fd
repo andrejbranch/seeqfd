@@ -1,0 +1,124 @@
+#!/usr/bin/env php
+
+<?php
+
+require __DIR__.'/../vendor/autoload.php';
+
+use Cocur\BackgroundProcess\BackgroundProcess;
+use Symfony\Component\Console\Application;
+use Symfony\Component\Console\Input\InputArgument;
+use Symfony\Component\Console\Input\InputInterface;
+use Symfony\Component\Console\Input\InputOption;
+use Symfony\Component\Console\Output\OutputInterface;
+
+function tryConnect() {
+
+    $requestTimeout = 1000; // ms
+
+    $context = new ZMQContext();
+
+    $request = json_encode(array(
+        'service' => 'controller',
+        'method' => 'connect',
+        'data' => array(
+            'type' => 'SEEQFD',
+            'host' => getHostName(),
+            'version' => '1.0.0',
+        )
+    ));
+
+    $client = $context->getSocket(ZMQ::SOCKET_REQ);
+    $client->connect("tcp://localhost:5555");
+    $client->send($request);
+
+    $poller = new ZmqPoll();
+    $poller->add($client, ZMQ::POLL_IN);
+
+    $readable = $writable = array();
+
+    $events = $poller->poll($readable, $writable, $requestTimeout);
+    $reply = null;
+
+    foreach ($readable as $sock) {
+        if ($sock == $client) {
+            $reply = $client->recvMulti();
+        }
+    }
+
+    $poller->remove($client);
+    $poller = null;
+    $client = null;
+
+    return $reply;
+}
+
+$console = new Application();
+
+$console
+    ->register('start')
+    ->setDescription('Start the seeqfd daemon')
+    ->setCode(function (InputInterface $input, OutputInterface $output) {
+
+        $pidFile = sprintf('%sseeqfd.pid', __DIR__.'/../');
+
+        // check for pid
+        if (file_exists($pidFile)) {
+            $pid = file_get_contents($pidFile);
+
+            // check if process is not running
+            $killResult = posix_kill($pid, 0);
+
+            if ($killResult) {
+                throw new \RunTimeException(sprintf('SEEQFD is already running with pid %s', $pid));
+            }
+        }
+
+        $process = new BackgroundProcess(sprintf('php %s/init', __DIR__));
+        $process->run();
+
+        $maxRetries = 4; // before we abandon
+        for ($i = 0; $i <= $maxRetries; $i++) {
+            $reply = tryConnect();
+
+            if ($reply) {
+                break;
+            }
+
+            echo("No response\n");
+        }
+
+        if ($reply) {
+            file_put_contents($pidFile, getmypid());
+            echo ("Connected \n");
+        } else {
+            echo ("Could not connect \n");
+            $killResult = posix_kill(getmypid(), 9);
+        }
+    })
+;
+
+$console
+    ->register('stop')
+    ->setDescription('Stop the seeqmdmd daemon')
+    ->setCode(function (InputInterface $input, OutputInterface $output) {
+
+        $pidFile = sprintf('%sseeqfd.pid', __DIR__.'/../');
+
+        if (!file_exists($pidFile)) {
+            throw new \RunTimeException('SEEQFD is not running');
+        }
+
+        $pid = file_get_contents($pidFile);
+
+        $killResult = posix_kill($pid, 9);
+
+        if (!$killResult) {
+            throw new \RunTimeException(sprintf('Stopping process with id %s failed', $pid));
+        }
+
+        unlink($pidFile);
+    })
+;
+
+$console->run();
+
